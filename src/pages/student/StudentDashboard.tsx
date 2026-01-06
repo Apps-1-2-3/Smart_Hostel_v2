@@ -1,10 +1,10 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { useAuth } from '@/contexts/AuthContext';
-import { todayMenu, mockAttendanceRecords } from '@/data/mockData';
+import { studentApi, AttendanceDTO, MealMenuDTO } from '@/services/api';
 import { 
   LogIn, 
   LogOut, 
@@ -15,6 +15,7 @@ import {
   Clock,
   CheckCircle2,
   XCircle,
+  Loader2,
 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format } from 'date-fns';
@@ -22,20 +23,79 @@ import { format } from 'date-fns';
 const StudentDashboard: React.FC = () => {
   const { user } = useAuth();
   const { toast } = useToast();
-  const [currentStatus, setCurrentStatus] = useState<'in' | 'out'>('in');
+  const [currentStatus, setCurrentStatus] = useState<'IN' | 'OUT'>('IN');
+  const [recentAttendance, setRecentAttendance] = useState<AttendanceDTO[]>([]);
+  const [todayMenu, setTodayMenu] = useState<MealMenuDTO[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isMarkingAttendance, setIsMarkingAttendance] = useState(false);
 
-  const handleMarkAttendance = (type: 'in' | 'out') => {
-    setCurrentStatus(type);
-    toast({
-      title: `Marked ${type.toUpperCase()}`,
-      description: `Attendance recorded at ${format(new Date(), 'h:mm a')}`,
-    });
+  useEffect(() => {
+    const fetchData = async () => {
+      if (!user?.studentId) return;
+      
+      setIsLoading(true);
+      try {
+        const [attendanceData, menuData, statusData] = await Promise.all([
+          studentApi.getAttendanceHistory(user.studentId).catch(() => []),
+          studentApi.getTodaysMenu().catch(() => []),
+          studentApi.getCurrentStatus(user.studentId).catch(() => null),
+        ]);
+        
+        setRecentAttendance(attendanceData.slice(0, 5));
+        setTodayMenu(menuData);
+        if (statusData) {
+          setCurrentStatus(statusData.type);
+        }
+      } catch (error) {
+        console.error('Failed to fetch dashboard data:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, [user?.studentId]);
+
+  const handleMarkAttendance = async (type: 'IN' | 'OUT') => {
+    if (!user?.studentId) return;
+    
+    setIsMarkingAttendance(true);
+    try {
+      const result = await studentApi.markAttendance(user.studentId, type);
+      setCurrentStatus(type);
+      setRecentAttendance(prev => [result, ...prev.slice(0, 4)]);
+      toast({
+        title: `Marked ${type}`,
+        description: `Attendance recorded at ${format(new Date(), 'h:mm a')}`,
+      });
+    } catch (error: any) {
+      toast({
+        title: 'Failed to mark attendance',
+        description: error.message || 'Please try again',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsMarkingAttendance(false);
+    }
   };
 
-  // Get recent attendance for this student
-  const recentAttendance = mockAttendanceRecords
-    .filter(r => r.studentId === '1')
-    .slice(0, 5);
+  // Group menu by meal time
+  const menuByMeal = todayMenu.reduce((acc, item) => {
+    const mealTime = item.mealTime.toLowerCase();
+    if (!acc[mealTime]) acc[mealTime] = [];
+    acc[mealTime].push(item.menuItem);
+    return acc;
+  }, {} as Record<string, string[]>);
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -51,10 +111,10 @@ const StudentDashboard: React.FC = () => {
             </p>
           </div>
           <Badge 
-            variant={currentStatus === 'in' ? 'default' : 'secondary'}
-            className={`text-sm px-4 py-2 ${currentStatus === 'in' ? 'bg-success text-success-foreground' : ''}`}
+            variant={currentStatus === 'IN' ? 'default' : 'secondary'}
+            className={`text-sm px-4 py-2 ${currentStatus === 'IN' ? 'bg-success text-success-foreground' : ''}`}
           >
-            {currentStatus === 'in' ? (
+            {currentStatus === 'IN' ? (
               <><CheckCircle2 className="h-4 w-4 mr-1" /> Currently IN</>
             ) : (
               <><XCircle className="h-4 w-4 mr-1" /> Currently OUT</>
@@ -71,7 +131,7 @@ const StudentDashboard: React.FC = () => {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Room Number</p>
-                <p className="font-display text-xl font-semibold">{user?.roomNumber}</p>
+                <p className="font-display text-xl font-semibold">{user?.roomNumber || 'N/A'}</p>
               </div>
             </CardContent>
           </Card>
@@ -82,8 +142,8 @@ const StudentDashboard: React.FC = () => {
                 <Calendar className="h-6 w-6 text-accent-foreground" />
               </div>
               <div>
-                <p className="text-sm text-muted-foreground">This Month</p>
-                <p className="font-display text-xl font-semibold">26 Days Present</p>
+                <p className="text-sm text-muted-foreground">Today's Records</p>
+                <p className="font-display text-xl font-semibold">{recentAttendance.length} entries</p>
               </div>
             </CardContent>
           </Card>
@@ -95,7 +155,7 @@ const StudentDashboard: React.FC = () => {
               </div>
               <div>
                 <p className="text-sm text-muted-foreground">Meals Today</p>
-                <p className="font-display text-xl font-semibold">3 / 3</p>
+                <p className="font-display text-xl font-semibold">{Object.keys(menuByMeal).length} / 3</p>
               </div>
             </CardContent>
           </Card>
@@ -117,26 +177,36 @@ const StudentDashboard: React.FC = () => {
             <CardContent className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <Button
-                  variant={currentStatus === 'out' ? 'gradient' : 'secondary'}
+                  variant={currentStatus === 'OUT' ? 'gradient' : 'secondary'}
                   size="lg"
                   className="h-20 flex-col gap-2"
-                  onClick={() => handleMarkAttendance('in')}
+                  onClick={() => handleMarkAttendance('IN')}
+                  disabled={isMarkingAttendance}
                 >
-                  <LogIn className="h-6 w-6" />
+                  {isMarkingAttendance ? (
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  ) : (
+                    <LogIn className="h-6 w-6" />
+                  )}
                   <span>Mark IN</span>
                 </Button>
                 <Button
-                  variant={currentStatus === 'in' ? 'accent' : 'secondary'}
+                  variant={currentStatus === 'IN' ? 'accent' : 'secondary'}
                   size="lg"
                   className="h-20 flex-col gap-2"
-                  onClick={() => handleMarkAttendance('out')}
+                  onClick={() => handleMarkAttendance('OUT')}
+                  disabled={isMarkingAttendance}
                 >
-                  <LogOut className="h-6 w-6" />
+                  {isMarkingAttendance ? (
+                    <Loader2 className="h-6 w-6 animate-spin" />
+                  ) : (
+                    <LogOut className="h-6 w-6" />
+                  )}
                   <span>Mark OUT</span>
                 </Button>
               </div>
               <p className="text-xs text-muted-foreground text-center">
-                Last marked: {format(new Date(), 'h:mm a')} • Auto-captured via QR
+                Last marked: {recentAttendance[0] ? format(new Date(recentAttendance[0].timestamp), 'h:mm a') : 'N/A'} • Auto-captured via QR
               </p>
             </CardContent>
           </Card>
@@ -154,16 +224,22 @@ const StudentDashboard: React.FC = () => {
             </CardHeader>
             <CardContent>
               <div className="space-y-4">
-                {todayMenu.map((meal) => (
-                  <div key={meal.meal} className="flex items-start gap-3">
-                    <Badge variant="outline" className="capitalize min-w-[80px] justify-center">
-                      {meal.meal}
-                    </Badge>
-                    <p className="text-sm text-muted-foreground flex-1">
-                      {meal.items.join(', ')}
-                    </p>
-                  </div>
-                ))}
+                {Object.keys(menuByMeal).length > 0 ? (
+                  Object.entries(menuByMeal).map(([mealTime, items]) => (
+                    <div key={mealTime} className="flex items-start gap-3">
+                      <Badge variant="outline" className="capitalize min-w-[80px] justify-center">
+                        {mealTime}
+                      </Badge>
+                      <p className="text-sm text-muted-foreground flex-1">
+                        {items.join(', ')}
+                      </p>
+                    </div>
+                  ))
+                ) : (
+                  <p className="text-center text-muted-foreground py-4">
+                    No menu available for today
+                  </p>
+                )}
               </div>
             </CardContent>
           </Card>
@@ -176,7 +252,7 @@ const StudentDashboard: React.FC = () => {
               <Clock className="h-5 w-5 text-primary" />
               Recent Activity
             </CardTitle>
-            <CardDescription>Your attendance logs from today</CardDescription>
+            <CardDescription>Your attendance logs</CardDescription>
           </CardHeader>
           <CardContent>
             <div className="space-y-3">
@@ -187,7 +263,7 @@ const StudentDashboard: React.FC = () => {
                     className="flex items-center justify-between p-3 rounded-lg bg-secondary/50"
                   >
                     <div className="flex items-center gap-3">
-                      {record.type === 'in' ? (
+                      {record.type === 'IN' ? (
                         <LogIn className="h-4 w-4 text-success" />
                       ) : (
                         <LogOut className="h-4 w-4 text-accent" />
@@ -195,13 +271,13 @@ const StudentDashboard: React.FC = () => {
                       <span className="font-medium capitalize">{record.type}</span>
                     </div>
                     <span className="text-sm text-muted-foreground">
-                      {format(record.timestamp, 'h:mm a')}
+                      {format(new Date(record.timestamp), 'MMM d, h:mm a')}
                     </span>
                   </div>
                 ))
               ) : (
                 <p className="text-center text-muted-foreground py-4">
-                  No attendance records for today
+                  No attendance records found
                 </p>
               )}
             </div>

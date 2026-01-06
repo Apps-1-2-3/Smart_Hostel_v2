@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -14,7 +14,7 @@ import {
   TableHeader,
   TableRow,
 } from '@/components/ui/table';
-import { mockAttendanceRecords } from '@/data/mockData';
+import { adminApi, AttendanceDTO } from '@/services/api';
 import {
   Search,
   Calendar as CalendarIcon,
@@ -22,6 +22,7 @@ import {
   LogOut,
   Download,
   Clock,
+  Loader2,
 } from 'lucide-react';
 import { format, isSameDay } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -29,16 +30,47 @@ import { cn } from '@/lib/utils';
 const AdminAttendance: React.FC = () => {
   const [searchQuery, setSearchQuery] = useState('');
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
-  const [typeFilter, setTypeFilter] = useState<'all' | 'in' | 'out'>('all');
+  const [typeFilter, setTypeFilter] = useState<'all' | 'IN' | 'OUT'>('all');
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceDTO[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
 
-  const filteredRecords = mockAttendanceRecords.filter(record => {
+  useEffect(() => {
+    const fetchAttendance = async () => {
+      setIsLoading(true);
+      try {
+        const data = await adminApi.getTodaysAttendance();
+        setAttendanceRecords(data);
+      } catch (error) {
+        console.error('Failed to fetch attendance:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchAttendance();
+  }, []);
+
+  const filteredRecords = attendanceRecords.filter(record => {
     const matchesSearch = 
       record.studentName.toLowerCase().includes(searchQuery.toLowerCase()) ||
-      record.roomNumber.toLowerCase().includes(searchQuery.toLowerCase());
-    const matchesDate = selectedDate ? isSameDay(record.timestamp, selectedDate) : true;
+      record.studentId.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesDate = selectedDate ? isSameDay(new Date(record.timestamp), selectedDate) : true;
     const matchesType = typeFilter === 'all' || record.type === typeFilter;
     return matchesSearch && matchesDate && matchesType;
   });
+
+  const checkIns = attendanceRecords.filter(r => r.type === 'IN').length;
+  const checkOuts = attendanceRecords.filter(r => r.type === 'OUT').length;
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -67,7 +99,7 @@ const AdminAttendance: React.FC = () => {
                 <Clock className="h-5 w-5 text-primary-foreground" />
               </div>
               <div>
-                <p className="text-2xl font-bold">{mockAttendanceRecords.length}</p>
+                <p className="text-2xl font-bold">{attendanceRecords.length}</p>
                 <p className="text-sm text-muted-foreground">Total Records Today</p>
               </div>
             </CardContent>
@@ -78,9 +110,7 @@ const AdminAttendance: React.FC = () => {
                 <LogIn className="h-5 w-5 text-success" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-success">
-                  {mockAttendanceRecords.filter(r => r.type === 'in').length}
-                </p>
+                <p className="text-2xl font-bold text-success">{checkIns}</p>
                 <p className="text-sm text-muted-foreground">Check-ins</p>
               </div>
             </CardContent>
@@ -91,9 +121,7 @@ const AdminAttendance: React.FC = () => {
                 <LogOut className="h-5 w-5 text-accent" />
               </div>
               <div>
-                <p className="text-2xl font-bold text-accent">
-                  {mockAttendanceRecords.filter(r => r.type === 'out').length}
-                </p>
+                <p className="text-2xl font-bold text-accent">{checkOuts}</p>
                 <p className="text-sm text-muted-foreground">Check-outs</p>
               </div>
             </CardContent>
@@ -107,7 +135,7 @@ const AdminAttendance: React.FC = () => {
               <div className="relative flex-1">
                 <Search className="absolute left-3 top-1/2 -translate-y-1/2 h-4 w-4 text-muted-foreground" />
                 <Input
-                  placeholder="Search by student name or room..."
+                  placeholder="Search by student name or ID..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
                   className="pl-10"
@@ -137,7 +165,7 @@ const AdminAttendance: React.FC = () => {
                 </PopoverContent>
               </Popover>
               <div className="flex gap-2">
-                {(['all', 'in', 'out'] as const).map((type) => (
+                {(['all', 'IN', 'OUT'] as const).map((type) => (
                   <Button
                     key={type}
                     variant={typeFilter === type ? 'default' : 'outline'}
@@ -145,7 +173,7 @@ const AdminAttendance: React.FC = () => {
                     onClick={() => setTypeFilter(type)}
                     className="capitalize"
                   >
-                    {type}
+                    {type.toLowerCase()}
                   </Button>
                 ))}
               </div>
@@ -171,9 +199,10 @@ const AdminAttendance: React.FC = () => {
                 <TableHeader>
                   <TableRow>
                     <TableHead>Student</TableHead>
-                    <TableHead>Room</TableHead>
+                    <TableHead>Student ID</TableHead>
                     <TableHead>Type</TableHead>
                     <TableHead>Time</TableHead>
+                    <TableHead className="hidden md:table-cell">Verified By</TableHead>
                   </TableRow>
                 </TableHeader>
                 <TableBody>
@@ -181,31 +210,32 @@ const AdminAttendance: React.FC = () => {
                     filteredRecords.map((record) => (
                       <TableRow key={record.id}>
                         <TableCell className="font-medium">{record.studentName}</TableCell>
-                        <TableCell>
-                          <Badge variant="outline">{record.roomNumber}</Badge>
-                        </TableCell>
+                        <TableCell className="font-mono text-sm">{record.studentId}</TableCell>
                         <TableCell>
                           <Badge
-                            variant={record.type === 'in' ? 'default' : 'secondary'}
+                            variant={record.type === 'IN' ? 'default' : 'secondary'}
                             className={cn(
                               'gap-1',
-                              record.type === 'in' ? 'bg-success text-success-foreground' : ''
+                              record.type === 'IN' ? 'bg-success text-success-foreground' : ''
                             )}
                           >
-                            {record.type === 'in' ? (
+                            {record.type === 'IN' ? (
                               <LogIn className="h-3 w-3" />
                             ) : (
                               <LogOut className="h-3 w-3" />
                             )}
-                            {record.type.toUpperCase()}
+                            {record.type}
                           </Badge>
                         </TableCell>
-                        <TableCell>{format(record.timestamp, 'h:mm a')}</TableCell>
+                        <TableCell>{format(new Date(record.timestamp), 'h:mm a')}</TableCell>
+                        <TableCell className="hidden md:table-cell text-muted-foreground">
+                          {record.verifiedBy || 'System'}
+                        </TableCell>
                       </TableRow>
                     ))
                   ) : (
                     <TableRow>
-                      <TableCell colSpan={4} className="text-center py-8 text-muted-foreground">
+                      <TableCell colSpan={5} className="text-center py-8 text-muted-foreground">
                         No attendance records found
                       </TableCell>
                     </TableRow>

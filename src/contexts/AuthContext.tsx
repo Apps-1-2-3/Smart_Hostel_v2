@@ -54,7 +54,7 @@ const MOCK_USERS: Record<string, User & { password: string }> = {
 export const AuthProvider: React.FC<{ children: ReactNode }> = ({ children }) => {
   const [user, setUser] = useState<User | null>(null);
   const [isLoading, setIsLoading] = useState(true);
-  const [useMockAuth, setUseMockAuth] = useState(true); // Default to mock for demo
+  const [useMockAuth, setUseMockAuth] = useState(false); // Use real backend API
 
   useEffect(() => {
     // Check for stored auth token on mount

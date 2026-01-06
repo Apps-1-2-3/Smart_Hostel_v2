@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
@@ -6,7 +6,9 @@ import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
 import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
-import { UtensilsCrossed, CalendarIcon, Coffee, Sun, Moon, CheckCircle2 } from 'lucide-react';
+import { useAuth } from '@/contexts/AuthContext';
+import { studentApi, MealChoiceDTO } from '@/services/api';
+import { UtensilsCrossed, CalendarIcon, Coffee, Sun, Moon, CheckCircle2, Loader2 } from 'lucide-react';
 import { useToast } from '@/hooks/use-toast';
 import { format, addDays, isBefore, startOfToday } from 'date-fns';
 import { cn } from '@/lib/utils';
@@ -17,12 +19,8 @@ interface MealSelection {
   dinner: boolean;
 }
 
-interface OptOutRecord {
-  date: Date;
-  meals: ('breakfast' | 'lunch' | 'dinner')[];
-}
-
 const StudentMeals: React.FC = () => {
+  const { user } = useAuth();
   const { toast } = useToast();
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(addDays(new Date(), 1));
   const [mealSelection, setMealSelection] = useState<MealSelection>({
@@ -30,16 +28,35 @@ const StudentMeals: React.FC = () => {
     lunch: false,
     dinner: false,
   });
-  const [optOutHistory] = useState<OptOutRecord[]>([
-    { date: addDays(new Date(), 1), meals: ['breakfast'] },
-    { date: addDays(new Date(), 3), meals: ['lunch', 'dinner'] },
-  ]);
+  const [optOutHistory, setOptOutHistory] = useState<MealChoiceDTO[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    const fetchOptOuts = async () => {
+      if (!user?.studentId) return;
+      
+      setIsLoading(true);
+      try {
+        const optOuts = await studentApi.getMealOptOuts(user.studentId);
+        setOptOutHistory(optOuts.filter(o => o.optedOut));
+      } catch (error) {
+        console.error('Failed to fetch opt-outs:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchOptOuts();
+  }, [user?.studentId]);
 
   const handleMealToggle = (meal: keyof MealSelection) => {
     setMealSelection(prev => ({ ...prev, [meal]: !prev[meal] }));
   };
 
-  const handleSubmitOptOut = () => {
+  const handleSubmitOptOut = async () => {
+    if (!user?.studentId || !selectedDate) return;
+
     const selectedMeals = Object.entries(mealSelection)
       .filter(([_, selected]) => selected)
       .map(([meal]) => meal);
@@ -53,12 +70,35 @@ const StudentMeals: React.FC = () => {
       return;
     }
 
-    toast({
-      title: 'Opt-out submitted',
-      description: `You have opted out of ${selectedMeals.join(', ')} for ${format(selectedDate!, 'MMMM d')}.`,
-    });
+    setIsSubmitting(true);
+    try {
+      const dateStr = format(selectedDate, 'yyyy-MM-dd');
+      
+      await Promise.all(
+        selectedMeals.map(meal => 
+          studentApi.submitMealOptOut(user.studentId!, dateStr, meal.toUpperCase(), true)
+        )
+      );
 
-    setMealSelection({ breakfast: false, lunch: false, dinner: false });
+      toast({
+        title: 'Opt-out submitted',
+        description: `You have opted out of ${selectedMeals.join(', ')} for ${format(selectedDate, 'MMMM d')}.`,
+      });
+
+      // Refresh opt-out history
+      const optOuts = await studentApi.getMealOptOuts(user.studentId);
+      setOptOutHistory(optOuts.filter(o => o.optedOut));
+      
+      setMealSelection({ breakfast: false, lunch: false, dinner: false });
+    } catch (error: any) {
+      toast({
+        title: 'Failed to submit opt-out',
+        description: error.message || 'Please try again',
+        variant: 'destructive',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const mealIcons = {
@@ -72,6 +112,24 @@ const StudentMeals: React.FC = () => {
     lunch: '12:30 PM - 2:00 PM',
     dinner: '7:30 PM - 9:00 PM',
   };
+
+  // Group opt-outs by date
+  const optOutsByDate = optOutHistory.reduce((acc, optOut) => {
+    const dateKey = optOut.date;
+    if (!acc[dateKey]) acc[dateKey] = [];
+    acc[dateKey].push(optOut.mealTime.toLowerCase());
+    return acc;
+  }, {} as Record<string, string[]>);
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -180,9 +238,16 @@ const StudentMeals: React.FC = () => {
                   size="lg"
                   className="w-full"
                   onClick={handleSubmitOptOut}
-                  disabled={!selectedDate || !Object.values(mealSelection).some(Boolean)}
+                  disabled={!selectedDate || !Object.values(mealSelection).some(Boolean) || isSubmitting}
                 >
-                  Submit Opt-Out Request
+                  {isSubmitting ? (
+                    <>
+                      <Loader2 className="h-4 w-4 mr-2 animate-spin" />
+                      Submitting...
+                    </>
+                  ) : (
+                    'Submit Opt-Out Request'
+                  )}
                 </Button>
               </CardContent>
             </Card>
@@ -197,22 +262,22 @@ const StudentMeals: React.FC = () => {
               </CardHeader>
               <CardContent>
                 <div className="space-y-3">
-                  {optOutHistory.length > 0 ? (
-                    optOutHistory.map((record, index) => (
+                  {Object.keys(optOutsByDate).length > 0 ? (
+                    Object.entries(optOutsByDate).map(([date, meals]) => (
                       <div
-                        key={index}
+                        key={date}
                         className="p-3 rounded-lg bg-secondary/50 space-y-2"
                       >
                         <div className="flex items-center justify-between">
                           <span className="font-medium text-sm">
-                            {format(record.date, 'EEE, MMM d')}
+                            {format(new Date(date), 'EEE, MMM d')}
                           </span>
                           <Badge variant="outline" className="text-xs">
-                            {record.meals.length} meal{record.meals.length > 1 ? 's' : ''}
+                            {meals.length} meal{meals.length > 1 ? 's' : ''}
                           </Badge>
                         </div>
                         <div className="flex flex-wrap gap-1">
-                          {record.meals.map((meal) => (
+                          {meals.map((meal) => (
                             <Badge key={meal} variant="secondary" className="text-xs capitalize">
                               {meal}
                             </Badge>

@@ -1,9 +1,9 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { mealStats, todayMenu } from '@/data/mockData';
+import { messApi, MealDemandDTO, MealMenuDTO } from '@/services/api';
 import {
   ChefHat,
   Users,
@@ -12,24 +12,74 @@ import {
   Sun,
   Moon,
   UtensilsCrossed,
+  Loader2,
 } from 'lucide-react';
 import { format } from 'date-fns';
 
 const MessDashboard: React.FC = () => {
+  const [mealDemand, setMealDemand] = useState<MealDemandDTO | null>(null);
+  const [todayMenu, setTodayMenu] = useState<MealMenuDTO[]>([]);
+  const [totalStudents, setTotalStudents] = useState(0);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchData = async () => {
+      setIsLoading(true);
+      try {
+        const [demandData, menuData, studentCount] = await Promise.all([
+          messApi.getTodaysDemand(),
+          messApi.getTodaysMenu(),
+          messApi.getTotalStudentCount(),
+        ]);
+        
+        setMealDemand(demandData);
+        setTodayMenu(menuData);
+        setTotalStudents(studentCount);
+      } catch (error) {
+        console.error('Failed to fetch mess data:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchData();
+  }, []);
+
   const mealIcons = {
     breakfast: Coffee,
     lunch: Sun,
     dinner: Moon,
   };
 
-  const mealData = [
-    { key: 'breakfast', ...mealStats.today.breakfast },
-    { key: 'lunch', ...mealStats.today.lunch },
-    { key: 'dinner', ...mealStats.today.dinner },
-  ] as const;
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
+
+  const mealData = mealDemand?.mealStats 
+    ? Object.entries(mealDemand.mealStats).map(([key, stats]) => ({
+        key: key.toLowerCase() as 'breakfast' | 'lunch' | 'dinner',
+        attending: stats.eating,
+        optOut: stats.optedOut,
+        total: stats.expected,
+      }))
+    : [];
 
   const totalMeals = mealData.reduce((acc, m) => acc + m.attending, 0);
   const totalOptOuts = mealData.reduce((acc, m) => acc + m.optOut, 0);
+
+  // Group menu by meal time
+  const menuByMeal = todayMenu.reduce((acc, item) => {
+    const mealTime = item.mealTime.toLowerCase() as 'breakfast' | 'lunch' | 'dinner';
+    if (!acc[mealTime]) acc[mealTime] = [];
+    acc[mealTime].push(item.menuItem);
+    return acc;
+  }, {} as Record<string, string[]>);
 
   return (
     <DashboardLayout>
@@ -77,7 +127,7 @@ const MessDashboard: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Registered Students</p>
-                  <p className="font-display text-3xl font-bold">{mealStats.today.breakfast.total}</p>
+                  <p className="font-display text-3xl font-bold">{totalStudents}</p>
                 </div>
                 <div className="h-12 w-12 rounded-xl bg-secondary flex items-center justify-center">
                   <Users className="h-6 w-6 text-secondary-foreground" />
@@ -90,8 +140,8 @@ const MessDashboard: React.FC = () => {
         {/* Meal Demand Cards */}
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
           {mealData.map((meal) => {
-            const Icon = mealIcons[meal.key];
-            const attendanceRate = Math.round((meal.attending / meal.total) * 100);
+            const Icon = mealIcons[meal.key] || UtensilsCrossed;
+            const attendanceRate = meal.total > 0 ? Math.round((meal.attending / meal.total) * 100) : 0;
 
             return (
               <Card key={meal.key}>
@@ -124,6 +174,13 @@ const MessDashboard: React.FC = () => {
               </Card>
             );
           })}
+          {mealData.length === 0 && (
+            <Card className="md:col-span-3">
+              <CardContent className="p-8 text-center text-muted-foreground">
+                No meal demand data available
+              </CardContent>
+            </Card>
+          )}
         </div>
 
         {/* Today's Menu */}
@@ -139,16 +196,16 @@ const MessDashboard: React.FC = () => {
           </CardHeader>
           <CardContent>
             <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-              {todayMenu.map((menu) => {
-                const Icon = mealIcons[menu.meal];
+              {Object.entries(menuByMeal).map(([mealTime, items]) => {
+                const Icon = mealIcons[mealTime as keyof typeof mealIcons] || UtensilsCrossed;
                 return (
-                  <div key={menu.meal} className="space-y-3">
+                  <div key={mealTime} className="space-y-3">
                     <div className="flex items-center gap-2">
                       <Icon className="h-5 w-5 text-primary" />
-                      <h4 className="font-medium capitalize">{menu.meal}</h4>
+                      <h4 className="font-medium capitalize">{mealTime}</h4>
                     </div>
                     <ul className="space-y-2">
-                      {menu.items.map((item, index) => (
+                      {items.map((item, index) => (
                         <li
                           key={index}
                           className="flex items-center gap-2 text-sm text-muted-foreground"
@@ -161,6 +218,11 @@ const MessDashboard: React.FC = () => {
                   </div>
                 );
               })}
+              {Object.keys(menuByMeal).length === 0 && (
+                <p className="md:col-span-3 text-center text-muted-foreground py-4">
+                  No menu available for today
+                </p>
+              )}
             </div>
           </CardContent>
         </Card>

@@ -1,16 +1,16 @@
-import React from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
-import { mealStats } from '@/data/mockData';
+import { messApi, MealDemandDTO } from '@/services/api';
 import {
   ChefHat,
-  Users,
   Clock,
   TrendingUp,
+  Loader2,
 } from 'lucide-react';
-import { format, addHours, isAfter, isBefore } from 'date-fns';
+import { format } from 'date-fns';
 
 interface MealSlot {
   key: 'breakfast' | 'lunch' | 'dinner';
@@ -21,13 +21,58 @@ interface MealSlot {
 }
 
 const MessDemand: React.FC = () => {
+  const [mealDemand, setMealDemand] = useState<MealDemandDTO | null>(null);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    const fetchDemand = async () => {
+      setIsLoading(true);
+      try {
+        const data = await messApi.getTodaysDemand();
+        setMealDemand(data);
+      } catch (error) {
+        console.error('Failed to fetch meal demand:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchDemand();
+  }, []);
+
   const now = new Date();
   const currentHour = now.getHours();
 
+  const defaultStats = { total: 0, optOut: 0, attending: 0 };
+  
   const mealSlots: MealSlot[] = [
-    { key: 'breakfast', label: 'Breakfast', startTime: 7.5, endTime: 9, stats: mealStats.today.breakfast },
-    { key: 'lunch', label: 'Lunch', startTime: 12.5, endTime: 14, stats: mealStats.today.lunch },
-    { key: 'dinner', label: 'Dinner', startTime: 19.5, endTime: 21, stats: mealStats.today.dinner },
+    { 
+      key: 'breakfast', 
+      label: 'Breakfast', 
+      startTime: 7.5, 
+      endTime: 9, 
+      stats: mealDemand?.mealStats?.breakfast 
+        ? { total: mealDemand.mealStats.breakfast.expected, optOut: mealDemand.mealStats.breakfast.optedOut, attending: mealDemand.mealStats.breakfast.eating }
+        : defaultStats 
+    },
+    { 
+      key: 'lunch', 
+      label: 'Lunch', 
+      startTime: 12.5, 
+      endTime: 14, 
+      stats: mealDemand?.mealStats?.lunch 
+        ? { total: mealDemand.mealStats.lunch.expected, optOut: mealDemand.mealStats.lunch.optedOut, attending: mealDemand.mealStats.lunch.eating }
+        : defaultStats 
+    },
+    { 
+      key: 'dinner', 
+      label: 'Dinner', 
+      startTime: 19.5, 
+      endTime: 21, 
+      stats: mealDemand?.mealStats?.dinner 
+        ? { total: mealDemand.mealStats.dinner.expected, optOut: mealDemand.mealStats.dinner.optedOut, attending: mealDemand.mealStats.dinner.eating }
+        : defaultStats 
+    },
   ];
 
   const getMealStatus = (slot: MealSlot): 'upcoming' | 'active' | 'completed' => {
@@ -42,6 +87,16 @@ const MessDemand: React.FC = () => {
     const m = (hour - h) * 60;
     return format(new Date().setHours(h, m), 'h:mm a');
   };
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -76,7 +131,9 @@ const MessDemand: React.FC = () => {
         <div className="space-y-6">
           {mealSlots.map((slot) => {
             const status = getMealStatus(slot);
-            const attendanceRate = Math.round((slot.stats.attending / slot.stats.total) * 100);
+            const attendanceRate = slot.stats.total > 0 
+              ? Math.round((slot.stats.attending / slot.stats.total) * 100) 
+              : 0;
 
             return (
               <Card 

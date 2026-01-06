@@ -1,11 +1,12 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import DashboardLayout from '@/components/layout/DashboardLayout';
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { Calendar } from '@/components/ui/calendar';
 import { Popover, PopoverContent, PopoverTrigger } from '@/components/ui/popover';
-import { mockAttendanceRecords } from '@/data/mockData';
+import { useAuth } from '@/contexts/AuthContext';
+import { studentApi, AttendanceDTO } from '@/services/api';
 import { 
   Calendar as CalendarIcon, 
   LogIn, 
@@ -13,34 +14,72 @@ import {
   Clock,
   Filter,
   Download,
+  Loader2,
 } from 'lucide-react';
-import { format, isToday, startOfMonth, endOfMonth, eachDayOfInterval, isSameDay } from 'date-fns';
+import { format, isToday, isSameDay, startOfMonth, endOfMonth } from 'date-fns';
 import { cn } from '@/lib/utils';
 
 const StudentAttendance: React.FC = () => {
+  const { user } = useAuth();
   const [selectedDate, setSelectedDate] = useState<Date | undefined>(new Date());
-  const [filterType, setFilterType] = useState<'all' | 'in' | 'out'>('all');
+  const [filterType, setFilterType] = useState<'all' | 'IN' | 'OUT'>('all');
+  const [attendanceRecords, setAttendanceRecords] = useState<AttendanceDTO[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [currentStatus, setCurrentStatus] = useState<'IN' | 'OUT'>('IN');
 
-  // Mock attendance data for the student
-  const attendanceRecords = mockAttendanceRecords.filter(r => r.studentId === '1');
+  useEffect(() => {
+    const fetchAttendance = async () => {
+      if (!user?.studentId) return;
+      
+      setIsLoading(true);
+      try {
+        const startDate = format(startOfMonth(new Date()), 'yyyy-MM-dd');
+        const endDate = format(endOfMonth(new Date()), 'yyyy-MM-dd');
+        
+        const [records, status] = await Promise.all([
+          studentApi.getAttendanceByRange(user.studentId, startDate, endDate),
+          studentApi.getCurrentStatus(user.studentId).catch(() => null),
+        ]);
+        
+        setAttendanceRecords(records);
+        if (status) {
+          setCurrentStatus(status.type);
+        }
+      } catch (error) {
+        console.error('Failed to fetch attendance:', error);
+      } finally {
+        setIsLoading(false);
+      }
+    };
+
+    fetchAttendance();
+  }, [user?.studentId]);
 
   // Filter records based on selected date and type
   const filteredRecords = attendanceRecords.filter(record => {
-    const dateMatch = selectedDate ? isSameDay(record.timestamp, selectedDate) : true;
+    const dateMatch = selectedDate ? isSameDay(new Date(record.timestamp), selectedDate) : true;
     const typeMatch = filterType === 'all' || record.type === filterType;
     return dateMatch && typeMatch;
   });
 
   // Calculate monthly stats
-  const currentMonth = new Date();
-  const daysInMonth = eachDayOfInterval({
-    start: startOfMonth(currentMonth),
-    end: endOfMonth(currentMonth),
-  });
-  
-  const presentDays = 26; // Mock data
-  const totalDays = daysInMonth.filter(d => d <= new Date()).length;
-  const attendancePercentage = Math.round((presentDays / totalDays) * 100);
+  const presentDays = new Set(
+    attendanceRecords
+      .filter(r => r.type === 'IN')
+      .map(r => format(new Date(r.timestamp), 'yyyy-MM-dd'))
+  ).size;
+  const totalDays = new Date().getDate();
+  const attendancePercentage = totalDays > 0 ? Math.round((presentDays / totalDays) * 100) : 0;
+
+  if (isLoading) {
+    return (
+      <DashboardLayout>
+        <div className="flex items-center justify-center h-64">
+          <Loader2 className="h-8 w-8 animate-spin text-primary" />
+        </div>
+      </DashboardLayout>
+    );
+  }
 
   return (
     <DashboardLayout>
@@ -118,11 +157,15 @@ const StudentAttendance: React.FC = () => {
               <div className="flex items-center justify-between">
                 <div>
                   <p className="text-sm text-muted-foreground">Today's Status</p>
-                  <p className="font-display text-xl font-bold text-foreground">Present</p>
-                  <p className="text-xs text-muted-foreground">Last: 8:45 AM</p>
+                  <p className="font-display text-xl font-bold text-foreground">
+                    {currentStatus === 'IN' ? 'Present' : 'Out'}
+                  </p>
+                  <p className="text-xs text-muted-foreground">
+                    {attendanceRecords[0] ? `Last: ${format(new Date(attendanceRecords[0].timestamp), 'h:mm a')}` : 'No records'}
+                  </p>
                 </div>
-                <Badge variant="default" className="bg-success text-success-foreground">
-                  IN
+                <Badge variant="default" className={currentStatus === 'IN' ? 'bg-success text-success-foreground' : ''}>
+                  {currentStatus}
                 </Badge>
               </div>
             </CardContent>
@@ -172,7 +215,7 @@ const StudentAttendance: React.FC = () => {
               <div className="space-y-2">
                 <label className="text-sm font-medium">Entry Type</label>
                 <div className="flex gap-2">
-                  {(['all', 'in', 'out'] as const).map((type) => (
+                  {(['all', 'IN', 'OUT'] as const).map((type) => (
                     <Button
                       key={type}
                       variant={filterType === type ? 'default' : 'outline'}
@@ -180,7 +223,7 @@ const StudentAttendance: React.FC = () => {
                       className="flex-1 capitalize"
                       onClick={() => setFilterType(type)}
                     >
-                      {type}
+                      {type.toLowerCase()}
                     </Button>
                   ))}
                 </div>
@@ -224,25 +267,25 @@ const StudentAttendance: React.FC = () => {
                       <div className="flex items-center gap-4">
                         <div className={cn(
                           'h-10 w-10 rounded-full flex items-center justify-center',
-                          record.type === 'in' ? 'bg-success/10' : 'bg-accent/10'
+                          record.type === 'IN' ? 'bg-success/10' : 'bg-accent/10'
                         )}>
-                          {record.type === 'in' ? (
+                          {record.type === 'IN' ? (
                             <LogIn className="h-5 w-5 text-success" />
                           ) : (
                             <LogOut className="h-5 w-5 text-accent" />
                           )}
                         </div>
                         <div>
-                          <p className="font-medium capitalize">{record.type === 'in' ? 'Checked In' : 'Checked Out'}</p>
+                          <p className="font-medium capitalize">{record.type === 'IN' ? 'Checked In' : 'Checked Out'}</p>
                           <p className="text-sm text-muted-foreground">
-                            {isToday(record.timestamp) ? 'Today' : format(record.timestamp, 'MMM d, yyyy')}
+                            {isToday(new Date(record.timestamp)) ? 'Today' : format(new Date(record.timestamp), 'MMM d, yyyy')}
                           </p>
                         </div>
                       </div>
                       <div className="text-right">
-                        <p className="font-medium">{format(record.timestamp, 'h:mm a')}</p>
+                        <p className="font-medium">{format(new Date(record.timestamp), 'h:mm a')}</p>
                         <Badge variant="outline" className="text-xs">
-                          {record.type.toUpperCase()}
+                          {record.type}
                         </Badge>
                       </div>
                     </div>
