@@ -1,5 +1,7 @@
 package com.rvce.smarthostel.controller;
 
+import com.rvce.smarthostel.entity.User;
+
 import com.rvce.smarthostel.dto.LoginRequest;
 import com.rvce.smarthostel.dto.LoginResponse;
 import com.rvce.smarthostel.service.AuthService;
@@ -30,5 +32,12 @@ public class AuthController {
     public ResponseEntity<String> validateToken() {
         // If this endpoint is reached, the JWT is valid (handled by filter)
         return ResponseEntity.ok("Token is valid");
+    }
+
+    
+    @PostMapping("/register")
+    public ResponseEntity<?> register(@RequestBody User user) {
+        User savedUser = authService.registerUser(user);
+        return ResponseEntity.ok(savedUser);
     }
 }
